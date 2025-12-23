@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MemoPix Sync Demo</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    input, select, button { padding: 8px; margin: 5px 0; }
+    .task { margin-bottom: 10px; border: 1px solid #ccc; padding: 10px; border-radius: 5px; display: flex; align-items: center; justify-content: space-between; }
+    .task-text { flex: 1; margin-left: 10px; }
+    .done { text-decoration: line-through; color: gray; }
+    img { max-width: 100px; display: block; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <h1>MemoPix Sync Demo</h1>
+  <input id="taskInput" placeholder="Nieuwe taak...">
+  <input type="text" id="photoURLInput" placeholder="Foto URL (optioneel)">
+  <input type="datetime-local" id="deadlineInput">
+  <select id="categorySelect">
+    <option value="Boodschappen">Boodschappen</option>
+    <option value="Werk">Werk</option>
+    <option value="Persoonlijk">Persoonlijk</option>
+  </select>
+  <button onclick="addTask()">Toevoegen</button>
+  <div id="tasks"></div>
+
+  <script>
+    const SHEET_ID = "YOUR_SHEET_ID";
+    const API_KEY = "YOUR_API_KEY";
+    let tasks = [];
+
+    async function loadTasks() {
+      const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Sheet1?key=${API_KEY}`);
+      const data = await response.json();
+      if(data.values){
+        tasks = data.values.map(row => ({
+          text: row[0],
+          category: row[1],
+          deadline: row[2],
+          photo: row[3] || '',
+          done: row[4] === "true",
+          notified: row[5] === "true"
+        }));
+      } else {
+        tasks = [];
+      }
+      renderTasks();
+    }
+
+    async function saveTasks() {
+      const values = tasks.map(t => [t.text, t.category, t.deadline, t.photo, t.done, t.notified]);
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Sheet1?valueInputOption=RAW?key=${API_KEY}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values })
+      });
+    }
+
+    function renderTasks() {
+      const tasksDiv = document.getElementById('tasks');
+      tasksDiv.innerHTML = '';
+      tasks.forEach((task, index) => {
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'task';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = task.done;
+        checkbox.onchange = async () => { task.done = checkbox.checked; await saveTasks(); renderTasks(); };
+
+        const taskText = document.createElement('div');
+        taskText.className = 'task-text';
+        taskText.innerHTML = `<strong>[${task.category}]</strong> ${task.text} <br> <small>Deadline: ${task.deadline ? new Date(task.deadline).toLocaleString() : 'Geen'}</small>`;
+        if(task.done) taskText.classList.add('done');
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'Verwijder';
+        deleteBtn.onclick = async () => { tasks.splice(index,1); await saveTasks(); renderTasks(); };
+
+        taskDiv.appendChild(checkbox);
+        taskDiv.appendChild(taskText);
+
+        if(task.photo){
+          const img = document.createElement('img');
+          img.src = task.photo;
+          taskDiv.appendChild(img);
+        }
+
+        taskDiv.appendChild(deleteBtn);
+        tasksDiv.appendChild(taskDiv);
+      });
+    }
+
+    async function addTask() {
+      const taskText = document.getElementById('taskInput').value;
+      const category = document.getElementById('categorySelect').value;
+      const deadline = document.getElementById('deadlineInput').value;
+      const photoURL = document.getElementById('photoURLInput').value;
+      if(!taskText) return;
+
+      const task = { text: taskText, category: category, deadline: deadline, photo: photoURL, done: false, notified: false };
+      tasks.push(task);
+      await saveTasks();
+      renderTasks();
+
+      document.getElementById('taskInput').value = '';
+      document.getElementById('photoURLInput').value = '';
+      document.getElementById('deadlineInput').value = '';
+
+      if(Notification.permission === "granted"){
+        new Notification("MemoPix", { body: `Nieuwe taak toegevoegd: ${taskText}` });
+      }
+    }
+
+    // Controle deadlines elke minuut
+    setInterval(() => {
+      const now = new Date();
+      tasks.forEach(task => {
+        if(task.deadline && !task.notified){
+          const deadlineDate = new Date(task.deadline);
+          if(now >= deadlineDate){
+            if(Notification.permission === "granted"){
+              new Notification("MemoPix", { body: `Deadline bereikt: ${task.text}` });
+            }
+            task.notified = true;
+            saveTasks();
+          }
+        }
+      });
+    }, 60000);
+
+    loadTasks();
+    renderTasks();
+
+    if(Notification.permission !== "granted"){
+      Notification.requestPermission();
+    }
+  </script>
+</body>
+</html>
